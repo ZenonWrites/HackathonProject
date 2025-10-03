@@ -350,10 +350,3 @@ This project demonstrates:
 - ✅ **Modern Tech Stack**: FastAPI, React 19, and cutting-edge tools
 - ✅ **Professional UI/UX**: Enterprise-grade security dashboard
 
-## 📞 Support
-
-For questions, issues, or contributions, please create an issue in the GitHub repository or contact the development team.
-
----
-
-**Built with ❤️ for ISRO's Cybersecurity Operations**
