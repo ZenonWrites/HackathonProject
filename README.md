@@ -348,5 +348,4 @@ This project demonstrates:
 - ✅ **AI/ML Integration**: Conversational interface for security operations
 - ✅ **Real-world Application**: ISRO space infrastructure security
 - ✅ **Modern Tech Stack**: FastAPI, React 19, and cutting-edge tools
-- ✅ **Professional UI/UX**: Enterprise-grade security dashboard
 
