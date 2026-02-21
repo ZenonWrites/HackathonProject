@@ -9,6 +9,12 @@ import requests
 import os
 from dotenv import load_dotenv
 import uuid
+import httpx
+import logging
+
+# 1. Import the new Google GenAI SDK components
+from google import genai
+from google.genai import types
 
 # Load environment variables
 load_dotenv()
@@ -29,10 +35,12 @@ app.add_middleware(
 # Create API router after CORS is configured
 api_router = APIRouter(prefix="/api")
 
+
 # Pydantic Models
 class ChatMessage(BaseModel):
     role: str  # 'user' or 'assistant'
     content: str
+
 
 class ChatRequest(BaseModel):
     messages: List[ChatMessage] = Field(
@@ -41,9 +49,9 @@ class ChatRequest(BaseModel):
         max_items=10,
         description="List of chat messages. Maximum 10 messages allowed."
     )
-    
+
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "messages": [
                     {"role": "user", "content": "Show me recent security alerts"}
@@ -51,19 +59,23 @@ class ChatRequest(BaseModel):
             }
         }
 
+
 class ChatResponse(BaseModel):
     response: Union[str, Dict[str, Any]]
     response_type: str  # 'text', 'table', 'chart'
 
+
 class ReportRequest(BaseModel):
     report_summary: str
+
 
 class ReportResponse(BaseModel):
     hash: str
     block_index: int
     message: str
 
-# System Prompt for OpenRouter
+
+# System Prompt
 SYSTEM_PROMPT = """
 You are CyRA, an expert cybersecurity analyst assistant for ISRO's Security Operations Center. You specialize in converting natural language security queries into Elasticsearch DSL queries and analyzing SIEM data.
 
@@ -114,6 +126,7 @@ When asked about security events, respond with:
 Focus on ISRO-specific security concerns like satellite communication security, mission-critical system protection, and space infrastructure cybersecurity.
 """
 
+
 # Simple Blockchain Implementation
 class Block:
     def __init__(self, index: int, data: str, previous_hash: str):
@@ -122,11 +135,11 @@ class Block:
         self.data = data
         self.previous_hash = previous_hash
         self.hash = self.calculate_hash()
-    
+
     def calculate_hash(self) -> str:
         block_string = f"{self.index}{self.timestamp}{self.data}{self.previous_hash}"
         return hashlib.sha256(block_string.encode()).hexdigest()
-    
+
     def to_dict(self) -> dict:
         return {
             "index": self.index,
@@ -136,16 +149,17 @@ class Block:
             "hash": self.hash
         }
 
+
 class Blockchain:
     def __init__(self):
         self.chain = [self.create_genesis_block()]
-    
+
     def create_genesis_block(self) -> Block:
         return Block(0, "Genesis Block - ISRO CyRA Report Chain", "0")
-    
+
     def get_latest_block(self) -> Block:
         return self.chain[-1]
-    
+
     def add_block(self, data: str) -> Block:
         previous_block = self.get_latest_block()
         new_block = Block(
@@ -156,63 +170,139 @@ class Blockchain:
         self.chain.append(new_block)
         return new_block
 
+
 # Global blockchain instance
 report_chain = Blockchain()
 
-# OpenRouter Integration
-class OpenRouterService:
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+# --- COMMENTED OUT OPENROUTER SERVICE ---
+# class OpenRouterService:
+#     def __init__(self):
+#         self.api_key = os.getenv('OPENROUTER_API_KEY')
+#         self.base_url = "https://openrouter.ai/api/v1"
+#
+#         if not self.api_key:
+#             logger.error("❌ OPENROUTER_API_KEY is missing from environment variables!")
+#         else:
+#             logger.info(f"✅ OpenRouter Service initialized (Key ends in: ...{self.api_key[-4:]})")
+#
+#     async def get_ai_response(self, messages: List[ChatMessage]) -> str:
+#         if not self.api_key:
+#             raise HTTPException(status_code=500, detail="OpenRouter API Key is missing on server.")
+#
+#         headers = {
+#             "Authorization": f"Bearer {self.api_key}",
+#             "Content-Type": "application/json",
+#             "HTTP-Referer": "http://localhost:3000",  # Frontend URL for CORS
+#             "X-Title": "ISRO CyRA Assistant"
+#         }
+#
+#         # Format messages for OpenRouter
+#         openrouter_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+#         for msg in messages:
+#             openrouter_messages.append({"role": msg.role, "content": msg.content})
+#
+#         payload = {
+#             "model": "google/gemma-3-27b-it:free", # Or "mistralai/mistral-7b-instruct-v0.1"
+#             "messages": openrouter_messages,
+#             "temperature": 0.3,
+#             "max_tokens": 1000
+#         }
+#
+#         print(f"DEBUG: Using API Key: {self.api_key[:5]}***")
+#
+#         try:
+#             async with httpx.AsyncClient(timeout=30.0) as client:
+#                 response = await client.post(
+#                     f"{self.base_url}/chat/completions",
+#                     headers=headers,
+#                     json=payload,
+#                 )
+#
+#                 if response.status_code != 200:
+#                     logger.error(f"❌ OpenRouter Error: {response.text}")
+#                     raise HTTPException(
+#                         status_code=response.status_code,
+#                         detail=f"Provider Error: {response.text}"
+#                     )
+#
+#                 response.raise_for_status()
+#
+#                 result = response.json()
+#                 logger.info("✅ Received response from OpenRouter")
+#                 return result['choices'][0]['message']['content']
+#
+#         except httpx.ReadTimeout:
+#             logger.error("❌ Request timed out")
+#             raise HTTPException(status_code=504, detail="OpenRouter timed out (30s limit)")
+#         except httpx.ConnectError:
+#             logger.error("❌ Connection failed")
+#             raise HTTPException(status_code=502, detail="Failed to connect to OpenRouter")
+#         except Exception as e:
+#             logger.error(f"❌ Unexpected error: {str(e)}")
+#             raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
+#
+#         except requests.exceptions.HTTPError as e:
+#             if e.response.status_code == 401:
+#                 raise HTTPException(status_code=500, detail="Invalid OpenRouter API Key.")
+#             raise HTTPException(status_code=500, detail=f"OpenRouter HTTP Error: {str(e)}")
+#         except Exception as e:
+#             print(f"General Exception in OpenRouterService: {str(e)}")
+#             raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
+
+# --- NEW GOOGLE GEMINI SERVICE ---
+class GeminiService:
     def __init__(self):
-        self.api_key = os.getenv('OPENROUTER_API_KEY')
-        self.base_url = "https://openrouter.ai/api/v1"
-        
+        # The client automatically picks up GEMINI_API_KEY from your environment variables
+        self.api_key = os.getenv('GEMINI_API_KEY')
+        if not self.api_key:
+            logger.error("❌ GEMINI_API_KEY is missing from environment variables!")
+        else:
+            logger.info(f"✅ Gemini Service initialized (Key ends in: ...{self.api_key[-4:]})")
+
     async def get_ai_response(self, messages: List[ChatMessage]) -> str:
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://isro-cyra.emergent.sh",
-            "X-Title": "ISRO CyRA Assistant"
-        }
-        
-        # Prepare messages for OpenRouter
-        openrouter_messages = [
-            {"role": "system", "content": SYSTEM_PROMPT}
-        ]
-        
+        if not self.api_key:
+            raise HTTPException(status_code=500, detail="Gemini API Key is missing on server.")
+
+        # Format messages for Gemini
+        gemini_messages = []
         for msg in messages:
-            openrouter_messages.append({
-                "role": msg.role,
-                "content": msg.content
+            # Gemini uses 'model' instead of 'assistant' for AI responses
+            role = "model" if msg.role == "assistant" else "user"
+            gemini_messages.append({
+                "role": role,
+                "parts": [{"text": msg.content}]
             })
-        
-        payload = {
-            "model": "mistralai/mistral-7b-instruct",
-            "messages": openrouter_messages,
-            "temperature": 0.3,
-            "max_tokens": 1000
-        }
-        
+
         try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=30
-            )
-            response.raise_for_status()
-            
-            result = response.json()
-            return result['choices'][0]['message']['content']
-            
-        except requests.exceptions.RequestException as e:
-            raise HTTPException(status_code=500, detail=f"OpenRouter API error: {str(e)}")
-        except KeyError as e:
-            raise HTTPException(status_code=500, detail=f"Unexpected response format: {str(e)}")
+            # We use the async client (`.aio`) so we don't block FastAPI
+            async with genai.Client().aio as client:
+                response = await client.models.generate_content(
+                    model="gemini-3-flash-preview",
+                    contents=gemini_messages,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                        temperature=0.3,
+                        max_output_tokens=1000
+                    )
+                )
+
+                logger.info("✅ Received response from Gemini")
+                return response.text
+
+        except Exception as e:
+            logger.error(f"❌ Gemini Error: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Provider Error: {str(e)}")
+
 
 # Mock SIEM Data Generator
 class MockSIEMService:
     def generate_mock_data(self, query_context: str) -> Dict[str, Any]:
         query_lower = query_context.lower()
-        
+
         if "malware" in query_lower or "virus" in query_lower:
             return {
                 "type": "table",
@@ -224,7 +314,7 @@ class MockSIEMService:
                     ["2024-01-15 12:45:33", "ISRO-CTL-03", "Rootkit.SatComm", "172.16.0.12", "Medium"]
                 ]
             }
-        
+
         elif "login" in query_lower or "authentication" in query_lower:
             return {
                 "type": "chart",
@@ -237,7 +327,7 @@ class MockSIEMService:
                     {"name": "Data Center", "value": 12}
                 ]
             }
-        
+
         elif "network" in query_lower or "traffic" in query_lower:
             return {
                 "type": "chart",
@@ -252,7 +342,7 @@ class MockSIEMService:
                     {"name": "20:00", "value": 6}
                 ]
             }
-        
+
         elif "threat" in query_lower or "attack" in query_lower:
             return {
                 "type": "table",
@@ -264,7 +354,7 @@ class MockSIEMService:
                     ["Data Exfiltration", "Mission Database", "T1041", "Medium", "Contained"]
                 ]
             }
-        
+
         else:
             # Default response for general queries
             return {
@@ -272,9 +362,12 @@ class MockSIEMService:
                 "content": "I've processed your security query. Current ISRO systems show normal operations with no critical alerts. All satellite communication channels are secure, and mission-critical systems are operating within normal parameters. Would you like me to run a specific security analysis?"
             }
 
-# Service instances
-openrouter_service = OpenRouterService()
+
+# Service instances updated to use Gemini instead
+# openrouter_service = OpenRouterService()
+gemini_service = GeminiService()
 mock_siem_service = MockSIEMService()
+
 
 # API Endpoints
 @api_router.post("/chat", response_model=ChatResponse, responses={
@@ -286,65 +379,73 @@ async def chat_endpoint(request: ChatRequest):
     try:
         if not request.messages:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail=[{"msg": "At least one message is required", "type": "value_error"}]
             )
-            
+
         # Ensure we have at least one user message
         if not any(msg.role == "user" for msg in request.messages):
             raise HTTPException(
                 status_code=400,
                 detail=[{"msg": "At least one user message is required", "type": "value_error"}]
             )
-            
-        # Get AI response from OpenRouter
-        ai_response = await openrouter_service.get_ai_response(request.messages)
-        
-        # Determine if the response should include mock data
-        last_message = request.messages[-1].content if request.messages else ""
-        
-        # Try to parse AI response as JSON for structured data
-        try:
-            response_data = json.loads(ai_response)
-            if isinstance(response_data, dict) and "type" in response_data:
-                return ChatResponse(
-                    response=response_data,
-                    response_type=response_data.get("type", "text")
-                )
-        except json.JSONDecodeError:
-            pass
-        
-        # Generate mock SIEM data based on context
-        mock_data = mock_siem_service.generate_mock_data(last_message)
-        
-        # If mock data is structured (table/chart), return it
-        if mock_data["type"] != "text":
-            # Combine AI response with mock data
-            combined_response = {
-                "type": mock_data["type"],
-                "ai_analysis": ai_response,
-                **mock_data
-            }
-            return ChatResponse(
-                response=combined_response,
-                response_type=mock_data["type"]
-            )
-        
-        # Return text response
-        return ChatResponse(
-            response=ai_response,
-            response_type="text"
-        )
-    
+
+        # Get AI response from Gemini
+        ai_response = await gemini_service.get_ai_response(request.messages)
+
+    except HTTPException as he:
+        # Re-raise known HTTP exceptions
+        raise he
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chat processing error: {str(e)}")
+        # Print the full traceback to your terminal
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Unexpected Backend Error: {str(e)}")
+
+    # Determine if the response should include mock data
+    last_message = request.messages[-1].content if request.messages else ""
+
+    # Try to parse AI response as JSON for structured data
+    try:
+        response_data = json.loads(ai_response)
+        if isinstance(response_data, dict) and "type" in response_data:
+            return ChatResponse(
+                response=response_data,
+                response_type=response_data.get("type", "text")
+            )
+    except json.JSONDecodeError:
+        pass
+
+    # Generate mock SIEM data based on context
+    mock_data = mock_siem_service.generate_mock_data(last_message)
+
+    # If mock data is structured (table/chart), return it
+    if mock_data["type"] != "text":
+        # Combine AI response with mock data
+        combined_response = {
+            "type": mock_data["type"],
+            "ai_analysis": ai_response,
+            **mock_data
+        }
+        return ChatResponse(
+            response=combined_response,
+            response_type=mock_data["type"]
+        )
+
+    # Return text response
+    return ChatResponse(
+        response=ai_response,
+        response_type="text"
+    )
+
 
 @api_router.post("/log_report", response_model=ReportResponse)
 async def log_report_endpoint(request: ReportRequest):
     try:
         # Calculate hash of the report
         report_hash = hashlib.sha256(request.report_summary.encode()).hexdigest()
-        
+
         # Create blockchain entry
         report_data = {
             "report_summary": request.report_summary,
@@ -352,18 +453,19 @@ async def log_report_endpoint(request: ReportRequest):
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "system": "ISRO CyRA"
         }
-        
+
         # Add to blockchain
         new_block = report_chain.add_block(json.dumps(report_data))
-        
+
         return ReportResponse(
             hash=report_hash,
             block_index=new_block.index,
             message=f"Report logged to blockchain for integrity verification. Block #{new_block.index}"
         )
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Report logging error: {str(e)}")
+
 
 @api_router.get("/blockchain")
 async def get_blockchain():
@@ -374,9 +476,11 @@ async def get_blockchain():
         "total_reports": len(report_chain.chain) - 1  # Excluding genesis block
     }
 
+
 @api_router.get("/")
 async def root():
     return {"message": "CyRA - Conversational SIEM Assistant for ISRO is operational"}
+
 
 # Include router
 app.include_router(api_router)
